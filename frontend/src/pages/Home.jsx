@@ -106,12 +106,12 @@ const Home = () => {
 
     try {
       const pickupParam = pickup?.center
-        ? pickup.center.join(',')
-        : (pickup.place_name || pickup.text);
+  ? `${pickup.center[1]},${pickup.center[0]}` // lat,lng
+  : (pickup.place_name || pickup.text);
 
-      const destinationParam = destination?.center
-        ? destination.center.join(',')
-        : (destination.place_name || destination.text);
+const destinationParam = destination?.center
+  ? `${destination.center[1]},${destination.center[0]}`
+  : (destination.place_name || destination.text);
 
       const response = await axios.get(`${import.meta.env.VITE_BASE_URL}/rides/get-fare`, {
         params: {
