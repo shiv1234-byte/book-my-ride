@@ -15,6 +15,17 @@ import Riding from './pages/Riding'
 import CaptainRiding from './pages/CaptainRiding'
 import 'remixicon/fonts/remixicon.css'
 import CaptainContext, { CaptainDataContext } from './context/CaptainContext'
+import socket from './socket';
+
+socket.on('connect', () => {
+  console.log('Connected to backend:', socket.id);
+});
+
+// Example event
+socket.on('rideUpdate', (data) => {
+  console.log('Ride update:', data);
+});
+
 
 const App = () => {
   const { captain, setCaptain } = useContext(CaptainDataContext)
