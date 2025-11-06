@@ -8,21 +8,19 @@ router.get('/get-coordinates',
     query('address').isString().isLength({ min: 3 }),
     authMiddleware.authUser,
     mapController.getCoordinates
-);
+);  // ✅ FIXED: Added closing parenthesis
 
 router.get('/get-distance-time',
     query('origin').isString().isLength({ min: 3 }),
     query('destination').isString().isLength({ min: 3 }),
     authMiddleware.authUser,
     mapController.getDistanceTime
-)
+);  
 
 router.get('/get-suggestions',
     query('input').isString().isLength({ min: 3 }),
     authMiddleware.authUser,
     mapController.getAutoCompleteSuggestions
-)
-
-
+);
 
 module.exports = router;

@@ -6,58 +6,60 @@ import 'mapbox-gl/dist/mapbox-gl.css';
 mapboxgl.accessToken = import.meta.env.VITE_MAPBOX_TOKEN;
 
 const containerStyle = {
-  width: '100%',
-  height: '100%',
+    width: '100%',
+    height: '100%',
 };
 
 const LiveTracking = () => {
-  const mapContainerRef = useRef(null);
-  const mapRef = useRef(null);
-  const markerRef = useRef(null);
-
-  const [currentPosition, setCurrentPosition] = useState({
-    lat: 28.6139, // default Delhi
-    lng: 77.2090,
-  });
-
-  // Initialise map once
-  useEffect(() => {
-    if (mapRef.current) return; // prevent multiple init
-    mapRef.current = new mapboxgl.Map({
-      container: mapContainerRef.current,
-      style: 'mapbox://styles/mapbox/streets-v12',
-      center: [currentPosition.lng, currentPosition.lat],
-      zoom: 15,
+    const mapContainerRef = useRef(null);
+    const mapRef = useRef(null);
+    const markerRef = useRef(null);
+    const [currentPosition, setCurrentPosition] = useState({
+        lat: 28.6139, // default Delhi
+        lng: 77.209,
     });
 
-    // add marker initially
-    markerRef.current = new mapboxgl.Marker().setLngLat([currentPosition.lng, currentPosition.lat]).addTo(mapRef.current);
-  }, []);
+    // Initialize map once
+    useEffect(() => {
+        if (mapRef.current) return; // prevent multiple init
 
-  // Watch position changes
-  useEffect(() => {
-    const updatePos = (position) => {
-      const { latitude, longitude } = position.coords;
-      setCurrentPosition({ lat: latitude, lng: longitude });
-    };
+        mapRef.current = new mapboxgl.Map({
+            container: mapContainerRef.current,
+            style: 'mapbox://styles/mapbox/streets-v12',
+            center: [currentPosition.lng, currentPosition.lat],
+            zoom: 15,
+        });
 
-    navigator.geolocation.getCurrentPosition(updatePos);
-    const watchId = navigator.geolocation.watchPosition(updatePos);
+        // add marker initially
+        markerRef.current = new mapboxgl.Marker()
+            .setLngLat([currentPosition.lng, currentPosition.lat])
+            .addTo(mapRef.current);
+    }, []);
 
-    return () => navigator.geolocation.clearWatch(watchId);
-  }, []);
+    // Watch position changes
+    useEffect(() => {
+        const updatePos = (position) => {
+            const { latitude, longitude } = position.coords;
+            setCurrentPosition({ lat: latitude, lng: longitude });
+        };
 
-  // Update marker & center when currentPosition changes
-  useEffect(() => {
-    if (mapRef.current && markerRef.current) {
-      markerRef.current.setLngLat([currentPosition.lng, currentPosition.lat]);
-      mapRef.current.setCenter([currentPosition.lng, currentPosition.lat]);
-    }
-  }, [currentPosition]);
+        navigator.geolocation.getCurrentPosition(updatePos);
+        const watchId = navigator.geolocation.watchPosition(updatePos);
 
-  return (
-    <div style={containerStyle} ref={mapContainerRef} />
-  );
+        return () => navigator.geolocation.clearWatch(watchId);
+    }, []);
+
+    // Update marker & center when currentPosition changes
+    useEffect(() => {
+        if (mapRef.current && markerRef.current) {
+            markerRef.current.setLngLat([currentPosition.lng, currentPosition.lat]);
+            mapRef.current.setCenter([currentPosition.lng, currentPosition.lat]);
+        }
+    }, [currentPosition]);
+
+    return (
+        <div ref={mapContainerRef} style={containerStyle} />
+    );  
 };
 
 export default LiveTracking;

@@ -4,9 +4,7 @@ const mapService = require('../services/maps.service');
 const { sendMessageToSocketId } = require('../socket');
 const rideModel = require('../models/ride.model');
 
-/**
- * Create a ride request from user
- */
+// Create a new ride
 module.exports.createRide = async (req, res) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
@@ -16,7 +14,8 @@ module.exports.createRide = async (req, res) => {
   const { pickup, destination, vehicleType } = req.body;
 
   try {
-    // 1️⃣ Create ride in DB
+    console.log('🚗 Creating ride:', { pickup, destination, vehicleType, userId: req.user._id });
+
     const ride = await rideService.createRide({
       user: req.user._id,
       pickup,
@@ -24,53 +23,97 @@ module.exports.createRide = async (req, res) => {
       vehicleType
     });
 
-    // respond to user immediately
+    console.log('✅ Ride created:', ride._id);
+
+    // Send response immediately
     res.status(201).json(ride);
 
-    // 2️⃣ Broadcast to nearby captains asynchronously
+    // Broadcast to nearby captains (async, don't block response)
     try {
-      const pickupCoordinates = await mapService.getAddressCoordinate(pickup);
+      let pickupCoordinates;
+      
+      // Check if pickup is already in "lat,lng" format
+      if (typeof pickup === 'string' && pickup.includes(',')) {
+        const [lat, lng] = pickup.split(',').map(Number);
+        if (!isNaN(lat) && !isNaN(lng)) {
+          pickupCoordinates = { lat, lng };
+        }
+      }
+      
+      // Otherwise, try to geocode the address
+      if (!pickupCoordinates) {
+        pickupCoordinates = await mapService.getAddressCoordinate(pickup);
+      }
+
       if (
         !pickupCoordinates ||
         typeof pickupCoordinates.lat !== 'number' ||
         typeof pickupCoordinates.lng !== 'number'
       ) {
-        console.warn('Invalid coordinates for pickup:', pickup);
+        console.warn('⚠️ Invalid coordinates for pickup:', pickup);
         return;
       }
 
+      console.log('📍 Pickup coordinates:', pickupCoordinates);
+
+      // Find nearby captains
       const captainsInRadius = await mapService.getCaptainsInTheRadius(
         pickupCoordinates.lat,
         pickupCoordinates.lng,
-        2 // radius in km
+        10 // radius in km
       );
 
-      // populate user info before sending
+      console.log(`📢 Found ${captainsInRadius.length} captains nearby`);
+
+      if (captainsInRadius.length === 0) {
+        console.log('⚠️ No captains available in the area');
+        return;
+      }
+
+      // Get ride with populated user data
       const rideWithUser = await rideModel
         .findById(ride._id)
         .populate('user');
 
-      // send to each captain socket
-      await Promise.all(
-        captainsInRadius.map((captain) =>
-          sendMessageToSocketId(captain.socketId, {
-            event: 'new-ride',
-            data: rideWithUser
-          })
-        )
-      );
+      // Send ride request to all nearby captains
+      const broadcastPromises = captainsInRadius.map((captain) => {
+        if (!captain.socketId) {
+          console.log(`⚠️ Captain ${captain._id} has no socketId`);
+          return Promise.resolve();
+        }
+
+        console.log(`📤 Sending ride to captain ${captain._id} (socket: ${captain.socketId})`);
+        
+        return sendMessageToSocketId(captain.socketId, {
+          event: 'new-ride',
+          data: {
+            rideId: rideWithUser._id,
+            pickup: rideWithUser.pickup,
+            destination: rideWithUser.destination,
+            fare: rideWithUser.fare,
+            vehicleType: rideWithUser.vehicleType,
+            otp: rideWithUser.otp,
+            user: {
+              name: rideWithUser.user.fullname.firstname + ' ' + rideWithUser.user.fullname.lastname,
+              phone: rideWithUser.user.email
+            }
+          }
+        });
+      });
+
+      await Promise.all(broadcastPromises);
+      console.log('✅ Ride broadcasted to all nearby captains');
+
     } catch (innerErr) {
-      console.error('Broadcast to captains failed:', innerErr.message);
+      console.error('❌ Broadcast to captains failed:', innerErr.message);
     }
   } catch (err) {
-    console.error('createRide error:', err);
-    return res.status(500).json({ message: err.message });
+    console.error('❌ createRide error:', err);
+    return res.status(500).json({ message: err.message || 'Failed to create ride' });
   }
 };
 
-/**
- * Calculate fare for a pickup/destination pair
- */
+// Get fare estimate
 module.exports.getFare = async (req, res) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
@@ -80,13 +123,17 @@ module.exports.getFare = async (req, res) => {
   const { pickup, destination } = req.query;
 
   try {
-    const [pickupLng, pickupLat] = pickup.split(',').map(Number);
-    const [destLng, destLat] = destination.split(',').map(Number);
+    console.log('💰 Calculating fare:', { pickup, destination });
 
-    if ([pickupLng, pickupLat, destLng, destLat].some((v) => Number.isNaN(v))) {
-      return res
-        .status(400)
-        .json({ message: 'Invalid pickup/destination coordinates' });
+    // Parse coordinates properly (format: "lat,lng")
+    const [pickupLat, pickupLng] = pickup.split(',').map(Number);
+    const [destLat, destLng] = destination.split(',').map(Number);
+
+    if ([pickupLat, pickupLng, destLat, destLng].some((v) => isNaN(v))) {
+      console.error('❌ Invalid coordinates:', { pickup, destination });
+      return res.status(400).json({ 
+        message: 'Invalid pickup/destination coordinates. Format should be "lat,lng"' 
+      });
     }
 
     const fare = await rideService.getFare(
@@ -94,16 +141,15 @@ module.exports.getFare = async (req, res) => {
       { lat: destLat, lng: destLng }
     );
 
+    console.log('✅ Fare calculated:', fare);
     return res.status(200).json(fare);
   } catch (err) {
-    console.error('getFare error:', err);
-    return res.status(500).json({ message: err.message });
+    console.error('❌ getFare error:', err);
+    return res.status(500).json({ message: err.message || 'Failed to calculate fare' });
   }
 };
 
-/**
- * Captain confirms a ride
- */
+// Captain confirms ride
 module.exports.confirmRide = async (req, res) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
@@ -113,13 +159,16 @@ module.exports.confirmRide = async (req, res) => {
   const { rideId } = req.body;
 
   try {
+    console.log('✅ Captain confirming ride:', { rideId, captainId: req.captain._id });
+
     const ride = await rideService.confirmRide({
       rideId,
-      captain: req.captain // added by your captain auth middleware
+      captain: req.captain._id
     });
 
-    // Notify the user who booked
+    // Notify user that ride was confirmed
     if (ride.user && ride.user.socketId) {
+      console.log('📤 Notifying user about ride confirmation');
       sendMessageToSocketId(ride.user.socketId, {
         event: 'ride-confirmed',
         data: ride
@@ -128,14 +177,12 @@ module.exports.confirmRide = async (req, res) => {
 
     return res.status(200).json(ride);
   } catch (err) {
-    console.error('confirmRide error:', err);
-    return res.status(500).json({ message: err.message });
+    console.error('❌ confirmRide error:', err);
+    return res.status(500).json({ message: err.message || 'Failed to confirm ride' });
   }
 };
 
-/**
- * Start a ride
- */
+// Captain starts ride
 module.exports.startRide = async (req, res) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
@@ -145,13 +192,17 @@ module.exports.startRide = async (req, res) => {
   const { rideId, otp } = req.body;
 
   try {
+    console.log('🚀 Starting ride:', { rideId, otp, captainId: req.captain._id });
+
     const ride = await rideService.startRide({
       rideId,
       otp,
-      captain: req.captain
+      captain: req.captain._id
     });
 
+    // Notify user that ride has started
     if (ride.user && ride.user.socketId) {
+      console.log('📤 Notifying user that ride started');
       sendMessageToSocketId(ride.user.socketId, {
         event: 'ride-started',
         data: ride
@@ -160,14 +211,12 @@ module.exports.startRide = async (req, res) => {
 
     return res.status(200).json(ride);
   } catch (err) {
-    console.error('startRide error:', err);
-    return res.status(500).json({ message: err.message });
+    console.error('❌ startRide error:', err);
+    return res.status(500).json({ message: err.message || 'Failed to start ride' });
   }
 };
 
-/**
- * End a ride
- */
+// Captain ends ride
 module.exports.endRide = async (req, res) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
@@ -177,12 +226,16 @@ module.exports.endRide = async (req, res) => {
   const { rideId } = req.body;
 
   try {
+    console.log('🏁 Ending ride:', { rideId, captainId: req.captain._id });
+
     const ride = await rideService.endRide({
       rideId,
-      captain: req.captain
+      captain: req.captain._id
     });
 
+    // Notify user that ride has ended
     if (ride.user && ride.user.socketId) {
+      console.log('📤 Notifying user that ride ended');
       sendMessageToSocketId(ride.user.socketId, {
         event: 'ride-ended',
         data: ride
@@ -191,7 +244,7 @@ module.exports.endRide = async (req, res) => {
 
     return res.status(200).json(ride);
   } catch (err) {
-    console.error('endRide error:', err);
-    return res.status(500).json({ message: err.message });
+    console.error('❌ endRide error:', err);
+    return res.status(500).json({ message: err.message || 'Failed to end ride' });
   }
 };
